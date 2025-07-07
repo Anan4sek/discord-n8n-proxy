@@ -1,51 +1,41 @@
 const express = require("express");
-const bodyParser = require("body-parser");
-const nacl = require("tweetnacl");
-const fetch = require("node-fetch");
+const { verifyKey } = require("discord-interactions");
 require("dotenv").config();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-const DISCORD_PUBLIC_KEY = process.env.DISCORD_PUBLIC_KEY;
-const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL;
+const PORT = process.env.PORT || 8080;
 
-app.use(bodyParser.json({
-  verify: (req, res, buf) => {
-    req.rawBody = buf;
-  }
-}));
+app.use(
+  express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
 
-app.post("/discord", async (req, res) => {
-  const signature = req.get("x-signature-ed25519");
-  const timestamp = req.get("x-signature-timestamp");
+app.post("/", (req, res) => {
+  const signature = req.header("x-signature-ed25519");
+  const timestamp = req.header("x-signature-timestamp");
+  const rawBody = req.rawBody;
 
-  const isValid = nacl.sign.detached.verify(
-    Buffer.from(timestamp + req.rawBody),
-    Buffer.from(signature, "hex"),
-    Buffer.from(DISCORD_PUBLIC_KEY, "hex")
-  );
+  const isValid = verifyKey(rawBody, signature, timestamp, process.env.DISCORD_PUBLIC_KEY);
 
   if (!isValid) {
-    console.log("❌ Invalid signature");
-    return res.status(401).send("invalid request signature");
+    return res.status(401).send("Invalid request signature");
   }
 
   if (req.body.type === 1) {
-    console.log("✅ PING received, responding...");
+    // PING -> PONG
     return res.json({ type: 1 });
   }
 
-  try {
-    await fetch(N8N_WEBHOOK_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(req.body)
-    });
-  } catch (err) {
-    console.error("❌ Failed to forward to n8n:", err);
-  }
+  // Forward interaction to your n8n webhook
+  const axios = require("axios");
+  axios.post(process.env.N8N_WEBHOOK_URL, req.body).catch(console.error);
 
-  res.status(200).end();
+  res.status(200).send("OK");
 });
 
-app.listen(PORT, () => console.log(`✅ Proxy live on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Proxy live on port ${PORT}`);
+});
