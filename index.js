@@ -8,7 +8,6 @@ const PORT        = +process.env.PORT || 8080;
 const PUBLIC_KEY  = process.env.DISCORD_PUBLIC_KEY;
 const N8N_WEBHOOK = process.env.N8N_WEBHOOK_URL;
 
-// health-check
 app.get("/", (_q, r) => r.send("OK"));
 
 app.post(
@@ -26,19 +25,17 @@ app.post(
   async (req, res) => {
     const interaction = req.body;
 
-    // PING  
+    // PING
     if (interaction.type === 1) {
       return res.json({ type: 1 });
     }
 
-    // BUTTON (component) → modal
+    // BUTTON → modal
     if (interaction.type === 3) {
       try {
-        // Czekamy na modal JSON z n8n
         const { data } = await axios.post(N8N_WEBHOOK, interaction, {
           headers: { "Content-Type": "application/json" },
         });
-        // Odsyłamy go bezpośrednio do Discorda
         return res.json(data);
       } catch (err) {
         console.error("n8n modal error:", err);
@@ -46,15 +43,25 @@ app.post(
       }
     }
 
-    // SLASH COMMAND → defer ACK
+    // SLASH → defer
     if (interaction.type === 2) {
       res.json({ type: 5 });
-      // opcjonalnie forward do n8n w tle
       axios.post(N8N_WEBHOOK, interaction).catch(console.error);
       return;
     }
 
-    // inne przypadki  
+    // **NEW** MODAL SUBMIT → defer update + forward do n8n
+    if (interaction.type === 5) {
+      res.json({ type: 6 });
+      axios
+        .post(N8N_WEBHOOK, interaction, {
+          headers: { "Content-Type": "application/json" },
+        })
+        .catch(console.error);
+      return;
+    }
+
+    // inne
     res.status(200).end();
   }
 );
