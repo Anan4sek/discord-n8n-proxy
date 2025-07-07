@@ -1,45 +1,47 @@
 require("dotenv").config();
 const express = require("express");
 const axios = require("axios");
-const { verifyKeyMiddleware } = require("discord-interactions");
+const { verifyKey } = require("discord-interactions");
 
 const app = express();
 const PUBLIC_KEY  = process.env.DISCORD_PUBLIC_KEY;
 const N8N_WEBHOOK = process.env.N8N_WEBHOOK_URL;
 const PORT       = process.env.PORT || 8080;
 
-// health-check dla Railway
+// Health-check dla Railway
 app.get("/", (_req, res) => res.send("OK"));
 
+// Ten middleware parsuje JSON, ale przed tym wykona verifyKey na raw bufferze
 app.post(
   "/interactions",
-  // 1) złap surowe JSON body
-  express.raw({ type: "application/json" }),
-  // 2) weryfikuj podpis
-  verifyKeyMiddleware(PUBLIC_KEY),
-  async (req, res) => {
-    let interaction;
-    try {
-      interaction = JSON.parse(req.body.toString());
-    } catch (e) {
-      console.error("❌ JSON parse error", e);
-      return res.status(400).end();
-    }
+  express.json({
+    verify: (req, res, buf) => {
+      const sig = req.header("x-signature-ed25519");
+      const ts  = req.header("x-signature-timestamp");
+      if (!verifyKey(buf, sig, ts, PUBLIC_KEY)) {
+        // 401 jeśli zła sygnatura
+        res.status(401).end("Invalid request signature");
+        throw new Error("Invalid request signature");
+      }
+    },
+  }),
+  (req, res) => {
+    const interaction = req.body;
 
-    // 3) Jeśli to PING (type = 1), odsyłamy PONG
+    // PING? odsyłamy PONG
     if (interaction.type === 1) {
       return res.json({ type: 1 });
     }
 
-    // 4) ACK dla pozostałych interakcji
+    // ACK natychmiast dla pozostałych
     res.status(200).end();
 
-    // 5) Forward w tle do n8n
+    // Forwardujemy w tle do n8n
     axios
       .post(N8N_WEBHOOK, interaction, {
         headers: { "Content-Type": "application/json" },
       })
-      .catch(err => console.error("❌ Forward to n8n failed:", err));
+      .catch(err => console.error("Forward to n8n failed:", err));
   }
 );
 
