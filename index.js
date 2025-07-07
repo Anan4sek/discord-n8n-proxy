@@ -1,37 +1,43 @@
 require("dotenv").config();
-const express = require("express");
-const { verifyKeyMiddleware } = require("discord-interactions");
-const axios = require("axios");
 
-const app = express();
+const express = require("express");
+const axios = require("axios");
+const { verifyKeyMiddleware } = require("discord-interactions");
+
 const PUBLIC_KEY = process.env.DISCORD_PUBLIC_KEY;
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL;
 
-// 1) Używamy express.raw, żeby złapać surowy buffer JSONa
+const app = express();
+
+// ❌ Uwaga: USUWAMY globalne express.json()
+// app.use(express.json());
+
 app.post(
   "/interactions",
+  // 1) Najpierw pobieramy RAW body (żeby middleware miał dostęp do dokładnego buf)
   express.raw({ type: "application/json" }),
-  verifyKeyMiddleware(PUBLIC_KEY), // 2) weryfikujemy podpis
+  // 2) Weryfikujemy nagłówki x-signature-*
+  verifyKeyMiddleware(PUBLIC_KEY),
+  // 3) Nasz handler po pomyślnej weryfikacji
   async (req, res) => {
-    // 3) Parsujemy JSON z raw body
+    // Parsujemy rawBuffer na JSON
     const interaction = JSON.parse(req.body.toString());
 
-    // 4) Jeśli to PING (type 1), middleware już odpowiedział {type:1}, więc dalej to już normalnie.
-    //    Ale SDK automatycznie wysłało odpowiedź PONG, więc tu robimy forward tylko dla innych typów.
-
+    // Forward do n8n
     try {
-      // 5) Przekazujemy interakcję do Twojego n8n
       await axios.post(N8N_WEBHOOK_URL, interaction, {
         headers: { "Content-Type": "application/json" },
       });
     } catch (err) {
-      console.error("Forward to n8n failed:", err);
+      console.error("❌ Forward to n8n failed:", err);
     }
 
-    // 6) Zwracamy 200 OK (Discord już dostał PONG od middleware)
-    res.status(200).end();
+    // Zwracamy 200 OK (Discord już dostał PONG od middleware)
+    return res.status(200).end();
   }
 );
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`Proxy live on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`✅ Proxy live on port ${PORT}`);
+});
